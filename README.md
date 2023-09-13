@@ -144,13 +144,76 @@ def check_IP_valid(firewalls_info):
 
 詳細程式碼位於[這邊](./gcp_firewalls_defend/main.py)，最後將進入點設為 `firewalls_update_detect` 即可。
 ### 雲端實例監控機制
-
 #### 更新檢測
 
+##### 1. 建立 Logs Router
+
+與防火牆機制的建立流程相同，這裡我們一樣透過 log 判斷機器是否有「更新」的事件，其中路由器的納入接收器記錄檔程式我們設定：
+
+```SQL
+resource.type="gce_instance" AND (
+protoPayload.methodName:"v1.compute.instances." ) OR (
+protoPayload.methodName:"beta.compute.instances.") AND
+protoPayload.response.operationType: *
+```
+
+排除的紀錄檔程式：
+```SQL
+protoPayload.methodName="v1.compute.instances.delete" OR 
+protoPayload.methodName="v1.compute.instances.stop" 
+```
+
+*主要希望在刪除或停止的時候不要觸發程式，這裡可以看各個團隊或程式的管控方式。*
+
+##### 2. 建立 Cloud Function
+
+和防火牆相同，設定 Cloud Function，當 Pub/Sub 主題接收到訊息時，觸發此 Function 即可，觸發條件（Pub/Sub）也和 Router 的設定一致。
+
+首先可以先透過簡單的文字處理，把 request 進來的事件做解析，得到「更新的機器名稱」，還有「機器所在區域」，以便後續快速查找。
+```python
+def parser_event_for_instance(event):
+    try:
+        pubsub_message = base64.b64decode(event["data"]).decode("utf-8")
+        json_content_msg = json.loads(pubsub_message)
+        source_details = json_content_msg["protoPayload"]["resourceName"]
+        start_index = source_details.find("zones/") + 6
+        end_index = source_details.find("/instance")
+        this_zone = source_details[start_index:end_index]
+        update_instances_name = source_details.split("/")[-1]
+    except Exception as e:
+        raise ValueError(f"Parser event input error: {e}")
+    return this_zone, update_instances_name
+```
+
+我們透過 `filter` 將上述得到的名稱及區域做整個 project 內部的查找。
+```python
+def get_instance_information(this_zone, instance_name):
+    try:
+        instance_info = (
+            COMPUTER.instances().list(project=PROJECT_ID, zone=this_zone, filter=f"name={instance_name}").execute()
+        )
+        if len(instance_info["items"]) != 1:
+            raise ValueError(
+                "Invalid number of instances got in monitoringInstances. Num of instance got: {len(instance_info['items'])}."
+            )
+        return instance_info["items"][0]
+    except Exception as e:
+        raise ValueError(f"Instance Update Monitoring Error: {e}")
+```
+
+最後定義想要針對「更新機器的規範檢查」就結束了！
+這裡以檢查「是否有掛載防火牆」為例：
+```python
+if not instance_info["tags"].get("items"):
+    print(
+        f"GCP Instance without Internet Tags Error: \n - Instance ID: {instance_info['id']}.\n"
+        f" - Instance area: {this_zone}.\n - Instance name: {instance_name}."
+    )
+    return
+```
+詳細程式碼位於[這邊](./gcp_instances_defend/main.py)，最後將進入點設為 `instances_update_detect` 即可。同樣的所有 `print` 可以改成 `raise error` 或 `send_msg_to_your_mail` 等等的方式掌握錯誤，甚至也能以同樣的方式在 log 增加錯誤訊息的路由器，以觸發 Cloud Function 傳送訊息回自身的信件夾中喔！
+
 #### 定期資源關閉
-
-
-### 定期掃描機制
 
 
 

@@ -18,7 +18,11 @@
       - [1. 建立 Logs Router](#1-建立-logs-router-1)
       - [2. 建立 Cloud Function](#2-建立-cloud-function-1)
     - [定期資源關閉](#定期資源關閉)
+      - [1. Cloud Scheduler](#1-cloud-scheduler)
+      - [2. Cloud Function](#2-cloud-function)
 - [討論](#討論)
+
+--- 
 ## 前置條件
 
 **本章將不介紹如何使用免費版方案！！！**
@@ -29,6 +33,7 @@
 
 如果你是希望學習 GCP 服務的人，有 個人/團隊 資源監控考量的人，有基本雲端和 Python 概念的人，那麼你可以往下看看如何**簡單**管控 GCP 資源。
 
+---
 ## 專案概述
 
 ### 為什麼需要監控機制？
@@ -48,6 +53,7 @@
 - **Cloud Storage**：用於儲存由我們的監控函數生成的數據和報告。
   - 白話：類似 google drive，就是存東西用的。
 
+---
 ## 自動監控功能
 
 規劃上，我們希望在專案內的所有 Compute Engine VM Instances 都處於安全狀態。因此針對防火牆、Instance 兩者的更動來做監管。
@@ -228,16 +234,54 @@ if not instance_info["tags"].get("items"):
 
 #### 定期資源關閉
 
+最後，簡單透過定期關閉資源的方式，對於團隊來說也能方便做到節流！
 
+*BTW，這套機制是由 AWS 搬到 GCP 的，因此並沒有使用 GCP 的一些原生方法，例如建立執行個體範本，群組等等，這些也都能簡單達到相同的效果！*
+
+##### 1. Cloud Scheduler
+
+搜尋 Cloud Scheduler，建立一套靜態排程，頻率可以自訂，以上班時間為例，可以設定成「* 18 * * 5」代表每週五下午六點整跑一次這個排程。其中頻率有五個位置能調整，依序是：分鐘、時刻、日、月、週。
+
+排程的執行作業選擇「Pub/Sub」，後續透過此方式便可呼叫 Cloud Function。
+
+
+##### 2. Cloud Function
+
+這裡的程式也大同小異，基本上就是 1. 列出所有機器 2. 找到 Running 機器 3. 關機。
+
+以上 3 點基本上也能同時做，因此這裡就不做過多贅述，有興趣可以參考[這邊](./gcp_autoshutdown/main.py)。
+
+後續可以考慮的議題是，是否能夠僅在「每週的最後一個上班日執行」，由於台灣許多連假，因此有時未必是週五關機，可能遇到 228 有三天或四天連假，就會需要動態做調整。
+
+其實只要能夠透過 [公開資料集](https://data.gov.tw/dataset/14718) 取得日曆的資訊，就可以每次動態調整下一次需要執行的時間。
+
+例如週五先執行一次 scheduler ，而在 function 內自動 query 到下一次最後一個上班日（假設是 2月27號，禮拜四），因此我們會希望 scheduler 動態調整成「2月27號」執行。
+
+可以透過 `google-cloud-scheduler` 套件提供的 `scheduler_v1.CloudSchedulerClient()` 模組，動態調整每一次的 scheduler 時間。例如：
+```python
+client = scheduler_v1.CloudSchedulerClient()
+job_name = f"your_scheduler_name"
+job = client.get_job(name=job_name)
+job.schedule = f"00 18 {next_call_date} {next_call_month} *"
+update_mask = field_mask_pb2.FieldMask(paths=["schedule"])
+updated_job = client.update_job(job=job, update_mask=update_mask)
+```
+
+便可達到動態的更新排程～
+
+
+
+---
 
 ## 討論
 
-如果你對 GCP 很熟了，可能會想問「為什麼不用 cloud monitoring？」
-
-其實很多服務都能達到監控的功能，cloud monitoring 也可以達到類似的效果做雲端服務的監控，並且他也整合好 UI 介面讓我們輕鬆操作，但**監控的標的物不同，會使得適用的服務不同。**
+本篇介紹了許多 GCP 服務可以用於雲端監控，但如果你對 GCP 很熟了，可能會想問「既然是做雲端監控，那為什麼不用 cloud monitoring？」其實 GCP 原生就有許多資源可以幫助監控，**大可不必寫很多 Function**來監控資源，但基於擴展性，透過自訂義的方式，能夠管控更多的服務。而 cloud monitoring 也可以達到類似的效果做雲端服務的監控，並且他也整合好 UI 介面讓我們輕鬆操作，但**監控的標的物不同，會使得適用的服務不同。**
 
 cloud monitoring 也能達到監控作用，但主要用於**動態指標**，例如「半個月內我的雲端機器的封包接收率」、「雲端機器的 CPU 使用率」、「防火牆阻絕封包率」等等，這些對於**資安層面的攻擊、監管、金費控制也有很大的幫助。**
 
 但對於**靜態指標**而言，例如「雲端機器規格」、「IP 限制範圍」等等，就以本篇介紹的服務較為方便。
 
 **就我本身所管理的團隊而言，兩種監控方式兼併使用，才能確保資安保護與雲端監控的最大化。**
+
+
+

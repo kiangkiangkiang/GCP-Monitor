@@ -1,4 +1,4 @@
-<h1> 輕鬆建置 GCP 雲端自動監控架構（以 Python 為例） </h1>
+<h1> 建置簡易 GCP 雲端自動監控架構（以 Python 為例） </h1>
 
 在這份指南中，主要希望引導使用者**簡單輕鬆**建立一個雲端監控系統，利用 Google Cloud Platform（GCP）的服務，包括 Cloud Function、Cloud Logging、Cloud Scheduler 和 Cloud Storage。我們的目標是幫助您自動監控雲基礎設施，專注於 **防火牆（Firewall）** 和 **實例（Instance）** 的安全性、資源優化以及使用情況追蹤。
 
